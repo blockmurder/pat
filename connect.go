@@ -80,7 +80,7 @@ func Connect(connectStr string) (success bool) {
 				url.Params.Set("hbaud", fmt.Sprint(config.SerialTNC.Baudrate))
 			}
 		case "ptc":
-			url.Host = config.PTC.Path
+			url.Params.Set("host", fmt.Sprint(config.PTC.Path))
 			if config.PTC.Baudrate > 0 {
 				url.Params.Set("baud", fmt.Sprint(config.PTC.Baudrate))
 			}
