@@ -16,7 +16,8 @@ import (
 	"github.com/la5nta/wl2k-go/transport/ardop2"
 	"github.com/la5nta/wl2k-go/transport/winmor"
 
-	// Register ax25 and telnet dialers
+	// Register other dialers
+	_ "github.com/harenber/ptc-go/ptc"
 	_ "github.com/la5nta/wl2k-go/transport/ax25"
 	_ "github.com/la5nta/wl2k-go/transport/telnet"
 )
@@ -85,7 +86,16 @@ func Connect(connectStr string) (success bool) {
 			if config.SerialTNC.Baudrate > 0 {
 				url.Params.Set("hbaud", fmt.Sprint(config.SerialTNC.Baudrate))
 			}
+		case "pactor":
+			url.Host = config.Pactor.Path
+			if config.Pactor.Baudrate > 0 {
+				url.Params.Set("baud", fmt.Sprint(config.Pactor.Baudrate))
+			}
 		}
+	}
+
+	if url.Scheme == "pactor" && config.Pactor.InitScript != "" && url.Params.Get("init_script") == "" {
+		url.Params.Set("init_script", config.Pactor.InitScript)
 	}
 
 	// Radio Only?
@@ -173,6 +183,8 @@ func qsy(method, addr string) (revert func(), err error) {
 		rigName = config.Ardop2.Rig
 	case MethodAX25:
 		rigName = config.AX25.Rig
+	case MethodPactor:
+		rigName = config.Pactor.Rig
 	default:
 		return noop, fmt.Errorf("Not supported with transport '%s'", method)
 	}
