@@ -163,12 +163,12 @@ var (
 )
 
 // NextPos returns the next reported position.
-func (c *Conn) NextPos() (Position, error) {
-	return c.NextPosTimeout(0)
+func (c *Conn) NextPos(useServerTime bool) (Position, error) {
+	return c.NextPosTimeout(0, useServerTime)
 }
 
 // NextPosTimeout returns the next reported position, or an empty position on timeout.
-func (c *Conn) NextPosTimeout(timeout time.Duration) (Position, error) {
+func (c *Conn) NextPosTimeout(timeout time.Duration, useServerTime bool) (Position, error) {
 	var deadline time.Time
 
 	if timeout > 0 {
@@ -180,17 +180,21 @@ func (c *Conn) NextPosTimeout(timeout time.Duration) (Position, error) {
 	for {
 		obj, err := c.Next()
 		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-			return Position{}, nil
+			return Position{}, ErrTimeout
 		} else if err != nil {
 			return Position{}, err
 		}
 
 		if pos, ok := obj.(Positioner); ok && pos.HasFix() {
-			return pos.Position(), nil
+			tmp := pos.Position()
+			if useServerTime {
+				tmp.Time = time.Now()
+			}
+			return tmp, nil
 		}
 
 		if !deadline.IsZero() && time.Now().After(deadline) {
-			return Position{}, nil
+			return Position{}, ErrTimeout
 		}
 	}
 }

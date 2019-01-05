@@ -27,6 +27,7 @@ import (
 	"github.com/la5nta/wl2k-go/catalog"
 	"github.com/la5nta/wl2k-go/fbb"
 	"github.com/la5nta/wl2k-go/mailbox"
+	"github.com/la5nta/pat/internal/gpsd"
 )
 
 // Status represents a status report as sent to the Web GUI
@@ -72,6 +73,7 @@ func ListenAndServe(addr string) error {
 	r.HandleFunc("/api/mailbox/{box}", postMessageHandler).Methods("POST")
 	r.HandleFunc("/api/posreport", postPositionHandler).Methods("POST")
 	r.HandleFunc("/api/status", statusHandler).Methods("GET")
+	r.HandleFunc("/api/gpsd", gpsdHandler).Methods("GET")
 	r.HandleFunc("/ws", wsHandler)
 	r.HandleFunc("/ui", uiHandler).Methods("GET")
 	r.HandleFunc("/", rootHandler).Methods("GET")
@@ -274,6 +276,7 @@ func postOutboundMessageHandler(w http.ResponseWriter, r *http.Request) {
 	// Post to outbox
 	if err := mbox.AddOut(msg); err != nil {
 		log.Println(err)
+
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -339,6 +342,14 @@ func getStatus() Status {
 }
 
 func statusHandler(w http.ResponseWriter, req *http.Request) { json.NewEncoder(w).Encode(getStatus()) }
+
+func gpsdHandler(w http.ResponseWriter, req *http.Request) {
+	if gpsdPos != (gpsd.Position{}) {
+		json.NewEncoder(w).Encode(gpsdPos)
+	} else {
+		http.Error(w, "Could not get position from GPSd", http.StatusInternalServerError)
+	}
+}
 
 func ConnectHandler(w http.ResponseWriter, req *http.Request) {
 	connectStr := req.FormValue("url")

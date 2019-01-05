@@ -33,6 +33,16 @@ import (
 	"github.com/la5nta/pat/internal/gpsd"
 )
 
+type GPSdStatus int
+
+const (
+	closed		GPSdStatus = 0
+	reconnect	GPSdStatus = 1
+	connected	GPSdStatus = 2
+	receive		GPSdStatus = 3
+	fault		GPSdStatus = 4
+)
+
 const (
 	MethodWinmor    = "winmor"
 	MethodArdop     = "ardop"
@@ -143,11 +153,15 @@ var (
 	logWriter io.Writer
 	eventLog  *EventLogger
 
-	exchangeChan chan ex             // The channel that the exchange loop is listening on
-	exchangeConn net.Conn            // Pointer to the active session connection (exchange)
-	mbox         *mailbox.DirHandler // The mailbox
-	listenHub    *ListenerHub
-	promptHub    *PromptHub
+	exchangeChan		chan ex             // The channel that the exchange loop is listening on
+	exchangeConn		net.Conn            // Pointer to the active session connection (exchange)
+	mbox			*mailbox.DirHandler // The mailbox
+	listenHub		*ListenerHub
+	promptHub		*PromptHub
+
+	gpsdConn		*gpsd.Conn
+	gpsdPos			gpsd.Position
+	gpsdStatus		GPSdStatus
 
 	appDir string
 )
@@ -250,6 +264,15 @@ func main() {
 	if err != nil {
 		log.Fatal("Unable to open event log file:", err)
 	}
+
+	// Initialize GPSd if aviable
+	if config.GPSd.Addr != "" {
+		gpsdService()
+	} else {
+		log.Println("GPSd is not set up")
+		gpsdConn = nil
+	}
+
 
 	// Read command line options from config if unset
 	if fOptions.MyCall == "" && config.MyCall == "" {
@@ -398,6 +421,12 @@ func helpHandle(args []string) {
 func cleanup() {
 	listenHub.Close()
 
+	if gpsdConn != nil {
+		if err := gpsdConn.Close(); err != nil {
+			log.Fatalf("Failure to close connection to GPSd: %s", err)
+		}
+	}
+
 	if wmTNC != nil {
 		if err := wmTNC.Close(); err != nil {
 			log.Fatalf("Failure to close winmor TNC: %s", err)
@@ -418,6 +447,50 @@ func cleanup() {
 
 	eventLog.Close()
 }
+
+func gpsdService() {
+	go func() {
+		var gpsdErr error
+
+		gpsdStatus = closed
+		for {
+			if gpsdStatus == connected || gpsdStatus == receive {
+				gpsdConn.Watch(true)
+				gpsdPos, gpsdErr = gpsdConn.NextPosTimeout(2*time.Second, config.GPSd.UseServerTime)
+				gpsdConn.Watch(false)
+
+				if gpsdErr == io.EOF {
+					gpsdStatus = reconnect
+					log.Println("GPSd connection lost, try reconnect")
+					gpsdConn.Close()
+				} else {
+					gpsdStatus = receive
+					if gpsdErr != nil {
+						log.Printf("GPSd: %s", gpsdErr)
+					}
+
+					// update only every 30 seconds
+					time.Sleep(time.Duration(30)*time.Second)
+				}
+			} else if gpsdStatus == closed || gpsdStatus == reconnect {
+				gpsdConn, gpsdErr = gpsd.Dial(config.GPSd.Addr)
+				if gpsdErr != nil {
+					gpsdStatus = fault
+					log.Printf("GPSd daemon failed: %s", gpsdErr)
+
+					// next try in 60 seconds
+					time.Sleep(time.Duration(60)*time.Second)
+
+					gpsdStatus = reconnect
+				} else {
+					log.Printf("Connected to GPSd %s", config.GPSd.Addr)
+					gpsdStatus = connected
+				}
+			}
+		}
+	}()
+}
+
 
 func loadMBox() {
 	mbox = mailbox.NewDirHandler(
@@ -730,30 +803,27 @@ func posReportHandle(args []string) {
 			log.Fatal(err)
 		}
 		report.Lon = &lon
-	} else if config.GPSdAddr != "" {
-		conn, err := gpsd.Dial(config.GPSdAddr)
-		if err != nil {
-			log.Fatalf("GPSd daemon: %s", err)
-		}
-		defer conn.Close()
-
-		conn.Watch(true)
-
-		log.Println("Waiting for position from GPSd...") //TODO: Spinning bar?
-		pos, err := conn.NextPos()
-		if err != nil {
-			log.Fatalf("GPSd: %s", err)
+	} else if config.GPSd.Addr != "" {
+		// wait for GPSd go into receiving or error state
+		for {
+			if gpsdStatus == receive || gpsdStatus == fault {
+				break
+			}
 		}
 
-		report.Lat = &pos.Lat
-		report.Lon = &pos.Lon
-		report.Date = pos.Time
+		if gpsdPos != (gpsd.Position{}) {
+			report.Lat = &gpsdPos.Lat
+			report.Lon = &gpsdPos.Lon
+			report.Date = gpsdPos.Time
 
-		// Course and speed is part of the spec, but does not seem to be
-		// supported by winlink.org anymore. Ignore it for now.
-		if false && pos.Track != 0 {
-			course := CourseFromFloat64(pos.Track, false)
-			report.Course = &course
+			// Course and speed is part of the spec, but does not seem to be
+			// supported by winlink.org anymore. Ignore it for now.
+			if false && gpsdPos.Track != 0 {
+				course := CourseFromFloat64(gpsdPos.Track, false)
+				report.Course = &course
+			}
+		} else {
+			log.Fatal("No GPSd position found")
 		}
 	} else {
 		fmt.Println("No position available. See --help")
