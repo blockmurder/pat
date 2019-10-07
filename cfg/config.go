@@ -144,7 +144,7 @@ type PactorConfig struct {
 	Path string `json:"path"`
 
 	// Baudrate for the serial port (e.g. 57600).
-	Baudrate int `json:"baudrate"`
+	Baudrate uint `json:"baudrate"`
 
 	// (optional) Reference name to the Hamlib rig for frequency control.
 	Rig string `json:"rig"`
